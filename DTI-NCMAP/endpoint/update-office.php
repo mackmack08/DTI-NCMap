@@ -9,15 +9,27 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 try {
     // Validate required fields
-    $required_fields = ['office_name', 'office_type', 'region_id', 'address', 'latitude', 'longitude'];
+    $required_fields = ['office_id', 'office_name', 'office_type', 'region_id', 'address', 'latitude', 'longitude'];
     foreach ($required_fields as $field) {
         if (empty($_POST[$field])) {
             throw new Exception("Field '$field' is required");
         }
     }
 
+    $office_id = $_POST['office_id'];
+    
+    // Get current office data
+    $stmt = $conn->prepare("SELECT image_path FROM offices WHERE office_id = ?");
+    $stmt->execute([$office_id]);
+    $current_office = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$current_office) {
+        throw new Exception('Office not found');
+    }
+    
+    $image_path = $current_office['image_path'];
+
     // Handle file upload
-    $image_path = null;
     if (isset($_FILES['office_image']) && $_FILES['office_image']['error'] === UPLOAD_ERR_OK) {
         $upload_dir = '../uploads/offices/';
         
@@ -32,23 +44,29 @@ try {
             throw new Exception('Invalid file type. Only JPG, JPEG, PNG, and GIF are allowed.');
         }
         
-        $filename = uniqid() . '.' . $file_extension;
-        $image_path = $upload_dir . $filename;
+        // Delete old image if exists
+        if ($image_path && file_exists('../' . $image_path)) {
+            unlink('../' . $image_path);
+        }
         
-        if (!move_uploaded_file($_FILES['office_image']['tmp_name'], $image_path)) {
+        $filename = uniqid() . '.' . $file_extension;
+        $new_image_path = $upload_dir . $filename;
+        
+        if (!move_uploaded_file($_FILES['office_image']['tmp_name'], $new_image_path)) {
             throw new Exception('Failed to upload image');
         }
         
-        $image_path = 'uploads/offices/' . $filename; // Store relative path
+        $image_path = 'uploads/offices/' . $filename;
     }
 
-    // Insert office
+    // Update office
     $stmt = $conn->prepare("
-        INSERT INTO offices (
-            office_name, office_type, region_id, address, latitude, longitude,
-            contact_number, email, office_head, description, services_offered,
-            office_hours, image_path
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        UPDATE offices SET 
+            office_name = ?, office_type = ?, region_id = ?, address = ?, 
+            latitude = ?, longitude = ?, contact_number = ?, email = ?, 
+            office_head = ?, description = ?, services_offered = ?, 
+            office_hours = ?, image_path = ?
+        WHERE office_id = ?
     ");
     
     $stmt->execute([
@@ -64,13 +82,13 @@ try {
         $_POST['description'] ?? null,
         $_POST['services_offered'] ?? null,
         $_POST['office_hours'] ?? null,
-        $image_path
+        $image_path,
+        $office_id
     ]);
     
     echo json_encode([
         'success' => true,
-        'message' => 'Office added successfully',
-        'office_id' => $conn->lastInsertId()
+        'message' => 'Office updated successfully'
     ]);
     
 } catch (Exception $e) {
