@@ -1,265 +1,133 @@
-// Global variables
-let map;
-let markers = [];
-let currentMarker = null;
-let offices = [];
-let filteredOffices = [];
-
-// Initialize the application
-document.addEventListener('DOMContentLoaded', function() {
-    initializeMap();
-    loadOffices();
-    setupEventListeners();
-});
-
-// Setup event listeners
-function setupEventListeners() {
-    // Search functionality
-    document.getElementById('searchInput').addEventListener('input', debounce(filterOffices, 300));
-    document.getElementById('regionFilter').addEventListener('change', filterOffices);
-    document.getElementById('officeTypeFilter').addEventListener('change', filterOffices);
+// DTI NC Map - Main JavaScript File
+class DTIMap {
+    constructor() {
+        this.map = null;
+        this.offices = [];
+        this.regions = [];
+        this.markers = [];
+        this.isAdmin = document.getElementById('officeForm') !== null;
+        
+        this.init();
+    }
     
-    // Form submission
-    document.getElementById('addOfficeForm').addEventListener('submit', handleAddOffice);
+    async init() {
+        this.initMap();
+        await this.loadRegions();
+        await this.loadOffices();
+        this.setupEventListeners();
+    }
     
-    // Modal close events
-    document.getElementById('officeModal').addEventListener('click', function(e) {
-        if (e.target === this) closeModal();
-    });
+    initMap() {
+        // Initialize map centered on Cebu
+        this.map = L.map('map').setView([10.3157, 123.8854], 10);
+        
+        // Add tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(this.map);
+        
+        // Add click event for adding new offices (admin only)
+        if (this.isAdmin) {
+            this.map.on('click', (e) => {
+                document.getElementById('latitude').value = e.latlng.lat.toFixed(6);
+                document.getElementById('longitude').value = e.latlng.lng.toFixed(6);
+            });
+        }
+    }
     
-    // Keyboard events
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            closeModal();
-            if (document.getElementById('addOfficeSection').style.display !== 'none') {
-                toggleAddOffice();
+        async loadRegions() {
+        try {
+            const response = await fetch('endpoint/get-regions.php');
+            const data = await response.json();
+            
+            if (data.success) {
+                this.regions = data.regions;
+                this.populateRegionFilters();
             }
+        } catch (error) {
+            console.error('Error loading regions:', error);
         }
-    });
-}
-
-// Initialize map
-function initializeMap() {
-    // Initialize map centered on Philippines
-    map = L.map('map').setView([12.8797, 121.7740], 6);
-
-    // Add tile layer
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        maxZoom: 19
-    }).addTo(map);
-
-    // Handle map clicks for adding new offices
-    map.on('click', function(e) {
-        if (document.getElementById('addOfficeSection').style.display !== 'none') {
-            handleMapClick(e);
-        }
-    });
-}
-
-// Handle map click for adding office
-function handleMapClick(e) {
-    const { lat, lng } = e.latlng;
-    
-    // Remove previous temporary marker
-    if (currentMarker) {
-        map.removeLayer(currentMarker);
     }
     
-    // Add temporary marker
-    currentMarker = L.marker([lat, lng], {
-        icon: createCustomIcon('fas fa-plus', 'temporary')
-    }).addTo(map);
-    
-    currentMarker.bindPopup(`
-        <div class="custom-popup">
-            <div class="popup-header">
-                <div class="popup-title">New DTI Office Location</div>
-                <div class="popup-type">Click "Save Office" to confirm</div>
-            </div>
-        </div>
-    `).openPopup();
-    
-    // Update form coordinates
-    document.getElementById('formLatitude').value = lat.toFixed(6);
-    document.getElementById('formLongitude').value = lng.toFixed(6);
-}
-
-// Create custom map icon
-function createCustomIcon(iconClass, type = 'field') {
-    const colors = {
-        'regional': '#dc2626',
-        'provincial': '#d97706',
-        'field': '#1e40af',
-        'extension': '#059669',
-        'ncr': '#059669',
-        'temporary': '#6b7280'
-    };
-    
-    return L.divIcon({
-        className: 'custom-div-icon',
-        html: `
-            <div class="custom-marker ${type}" style="background-color: ${colors[type] || colors.field}">
-                <i class="${iconClass}"></i>
-            </div>
-        `,
-        iconSize: [30, 30],
-        iconAnchor: [15, 30],
-        popupAnchor: [0, -30]
-    });
-}
-
-// This would be part of your main.js file where you create office items
-function createOfficeItem(office) {
-    const officeItem = document.createElement('div');
-    officeItem.className = 'office-item';
-    officeItem.setAttribute('data-id', office.id);
-    
-    // Determine if this is an NCR office
-    const isNCR = office.is_ncr === '1';
-    
-    officeItem.innerHTML = `
-        <div class="office-header">
-            <h3 class="office-name">${office.office_name}</h3>
-            <span class="office-type">${office.office_type}</span>
-        </div>
-        <span class="office-region ${isNCR ? 'ncr' : ''}">${office.region_name}${isNCR ? ' (NCR)' : ''}</span>
-        <p class="office-address">
-            <i class="fas fa-map-marker-alt"></i> ${office.address}
-        </p>
-        <div class="office-meta">
-            ${office.contact_number ? `
-            <div class="office-meta-item">
-                <i class="fas fa-phone"></i>
-                <span>${office.contact_number}</span>
-            </div>` : ''}
-            ${office.email ? `
-            <div class="office-meta-item">
-                <i class="fas fa-envelope"></i>
-                <span>${office.email}</span>
-            </div>` : ''}
-        </div>
-        <div class="office-actions">
-            <button class="btn btn-primary" onclick="viewOfficeDetails(${office.id})">
-                <i class="fas fa-info-circle"></i> Details
-            </button>
-            <button class="btn btn-secondary" onclick="locateOnMap(${office.id})">
-                <i class="fas fa-map-pin"></i> Locate
-            </button>
-        </div>
-    `;
-    
-    return officeItem;
+    async loadOffices() {
+        try {
+            const response = await fetch('endpoint/get-offices.php');
+            const data = await response.json();
+            
+            if (data.success) {
+                this.offices = data.offices;
+                this.displayOffices();
+                this.populateOfficeList();
+            } else {
+                this.showNotification('Error loading offices: ' + data.message, 'error');
             }
-// Load offices from database
-async function loadOffices() {
-    try {
-        showLoading(true);
-        const response = await fetch('endpoint/get-offices.php');
-        const data = await response.json();
-        
-        if (data.success) {
-            offices = data.offices;
-            filteredOffices = [...offices];
-            displayOffices();
-            addMarkersToMap();
-        } else {
-            showAlert('Error loading offices: ' + data.message, 'error');
+        } catch (error) {
+            console.error('Error loading offices:', error);
+            this.showNotification('Error loading offices', 'error');
         }
-    } catch (error) {
-        showAlert('Network error: ' + error.message, 'error');
-    } finally {
-        showLoading(false);
-    }
-}
-
-// Display offices in sidebar
-function displayOffices() {
-    const officeList = document.getElementById('officeList');
-    const officeCount = document.getElementById('officeCount');
-    
-    officeCount.textContent = filteredOffices.length;
-    
-    if (filteredOffices.length === 0) {
-        officeList.innerHTML = `
-            <div class="no-results">
-                <i class="fas fa-search"></i>
-                <p>No DTI offices found matching your criteria.</p>
-            </div>
-        `;
-        return;
     }
     
-    officeList.innerHTML = filteredOffices.map(office => `
-        <div class="office-item" onclick="selectOffice(${office.office_id})" data-office-id="${office.office_id}">
-            <div class="office-header">
-                <div class="office-name">${office.office_name}</div>
-                <div class="office-type">${office.office_type}</div>
-            </div>
-            <div class="office-region ${office.is_ncr ? 'ncr' : ''}">${office.region_name}${office.is_ncr ? ' (NCR)' : ''}</div>
-            <div class="office-address">${office.address || 'Address not available'}</div>
-            <div class="office-actions">
-                <button class="btn btn-primary" onclick="event.stopPropagation(); viewOfficeOnMap(${office.office_id})">
-                    <i class="fas fa-map-marker-alt"></i> View on Map
-                </button>
-                <button class="btn btn-secondary" onclick="event.stopPropagation(); showOfficeDetails(${office.office_id})">
-                    <i class="fas fa-info-circle"></i> Details
-                </button>
-                                <button class="btn btn-danger" onclick="event.stopPropagation(); deleteOffice(${office.office_id})">
-                    <i class="fas fa-trash"></i> Delete
-                </button>
-            </div>
-        </div>
-    `).join('');
-}
-
-// Add markers to map
-function addMarkersToMap() {
-    // Clear existing markers
-    markers.forEach(marker => map.removeLayer(marker));
-    markers = [];
+    displayOffices() {
+        // Clear existing markers
+        this.markers.forEach(marker => this.map.removeLayer(marker));
+        this.markers = [];
+        
+        this.offices.forEach(office => {
+            const marker = L.marker([office.latitude, office.longitude], {
+                icon: this.createMarkerIcon(office.office_type)
+            }).addTo(this.map);
+            
+            marker.bindPopup(this.createPopupContent(office));
+            marker.on('click', () => this.showOfficeDetails(office.office_id));
+            
+            this.markers.push(marker);
+        });
+    }
     
-    filteredOffices.forEach(office => {
-        const iconClass = getOfficeIcon(office.office_type);
-        const markerType = office.is_ncr ? 'ncr' : office.office_type.toLowerCase().replace(' ', '');
+    createMarkerIcon(officeType) {
+        let className = 'nc-marker-icon';
         
-        const marker = L.marker([office.latitude, office.longitude], {
-            icon: createCustomIcon(iconClass, markerType)
-        }).addTo(map);
+        switch(officeType) {
+            case 'Regional Office':
+                className += ' regional-office';
+                break;
+            case 'Provincial Office':
+                className += ' provincial-office';
+                break;
+            case 'Field Office':
+                className += ' field-office';
+                break;
+            case 'Extension Office':
+                className += ' extension-office';
+                break;
+            case 'Negosyo Center':
+                className += ' negosyo-center';
+                break;
+        }
         
-        marker.bindPopup(createPopupContent(office));
-        marker.officeId = office.office_id;
-        markers.push(marker);
-    });
-}
-
-// Get icon for office type
-function getOfficeIcon(officeType) {
-    const icons = {
-        'Regional Office': 'fas fa-building',
-        'Provincial Office': 'fas fa-city',
-        'Field Office': 'fas fa-home',
-        'Extension Office': 'fas fa-store'
-    };
-    return icons[officeType] || 'fas fa-building';
-}
-
-// Create popup content
-function createPopupContent(office) {
-    return `
-        <div class="custom-popup">
-            <div class="popup-header">
-                <div class="popup-title">${office.office_name}</div>
-                <div class="popup-type">${office.office_type} - ${office.region_name}${office.is_ncr ? ' (NCR)' : ''}</div>
-            </div>
-            <div class="popup-content">
-                <div class="popup-info">
-                    ${office.address ? `
-                        <div class="popup-info-item">
-                            <i class="fas fa-map-marker-alt"></i>
-                            <span>${office.address}</span>
-                        </div>
-                    ` : ''}
+        return L.divIcon({
+            html: '<div class="' + className + '">NC</div>',
+            className: 'custom-marker',
+            iconSize: [40, 40],
+            iconAnchor: [20, 40],
+            popupAnchor: [0, -40]
+        });
+    }
+    
+    createPopupContent(office) {
+        const badgeClass = office.office_type.toLowerCase().replace(/\s+/g, '-');
+        
+        return `
+            <div class="marker-popup">
+                <div class="popup-header">
+                    <h3 class="popup-title">${office.office_name}</h3>
+                    <span class="popup-badge ${badgeClass}">${office.office_type}</span>
+                </div>
+                <div class="popup-body">
+                    <div class="popup-info-item">
+                        <i class="fas fa-map-marker-alt"></i>
+                        <span>${office.address}</span>
+                    </div>
                     ${office.contact_number ? `
                         <div class="popup-info-item">
                             <i class="fas fa-phone"></i>
@@ -272,383 +140,545 @@ function createPopupContent(office) {
                             <span>${office.email}</span>
                         </div>
                     ` : ''}
-                    ${office.office_hours ? `
-                        <div class="popup-info-item">
-                            <i class="fas fa-clock"></i>
-                            <span>${office.office_hours}</span>
-                        </div>
+                </div>
+                <div class="popup-footer">
+                    <button class="popup-btn btn-primary" onclick="dtiMap.showOfficeDetails(${office.office_id})">
+                        <i class="fas fa-info-circle"></i> View Details
+                    </button>
+                    ${this.isAdmin ? `
+                        <button class="popup-btn btn-secondary" onclick="dtiMap.editOffice(${office.office_id})">
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
                     ` : ''}
                 </div>
-                <div class="popup-actions">
-                    <button class="btn btn-primary" onclick="showOfficeDetails(${office.office_id})">
-                        <i class="fas fa-info-circle"></i> Details
-                    </button>
-                    <button class="btn btn-secondary" onclick="getDirections(${office.latitude}, ${office.longitude})">
-                        <i class="fas fa-directions"></i> Directions
-                    </button>
-                </div>
             </div>
-        </div>
-    `;
-}
-
-// Filter offices
-function filterOffices() {
-    const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-    const regionFilter = document.getElementById('regionFilter').value;
-    const typeFilter = document.getElementById('officeTypeFilter').value;
-    
-    filteredOffices = offices.filter(office => {
-        const matchesSearch = !searchTerm || 
-            office.office_name.toLowerCase().includes(searchTerm) ||
-            office.region_name.toLowerCase().includes(searchTerm) ||
-            (office.address && office.address.toLowerCase().includes(searchTerm));
-        
-        const matchesRegion = !regionFilter || office.region_id == regionFilter;
-        const matchesType = !typeFilter || office.office_type === typeFilter;
-        
-        return matchesSearch && matchesRegion && matchesType;
-    });
-    
-    displayOffices();
-    addMarkersToMap();
-}
-
-// Clear filters
-function clearFilters() {
-    document.getElementById('searchInput').value = '';
-    document.getElementById('regionFilter').value = '';
-    document.getElementById('officeTypeFilter').value = '';
-    filterOffices();
-}
-
-// Select office
-function selectOffice(officeId) {
-    // Remove previous selection
-    document.querySelectorAll('.office-item').forEach(item => {
-        item.classList.remove('active');
-    });
-    
-    // Add selection to clicked item
-    document.querySelector(`[data-office-id="${officeId}"]`).classList.add('active');
-    
-    // Find and open marker popup
-    const marker = markers.find(m => m.officeId === officeId);
-    if (marker) {
-        map.setView(marker.getLatLng(), 15);
-        marker.openPopup();
+        `;
     }
-}
-
-// View office on map
-function viewOfficeOnMap(officeId) {
-    const office = offices.find(o => o.office_id === officeId);
-    if (office) {
-        map.setView([office.latitude, office.longitude], 15);
-        const marker = markers.find(m => m.officeId === officeId);
-        if (marker) {
-            marker.openPopup();
+    
+    populateRegionFilters() {
+        const regionFilter = document.getElementById('regionFilter');
+        const regionSelect = document.getElementById('regionId');
+        
+        this.regions.forEach(region => {
+            const option = new Option(region.region_name, region.region_id);
+            regionFilter.appendChild(option.cloneNode(true));
+            
+            if (regionSelect) {
+                regionSelect.appendChild(option);
+            }
+        });
+    }
+    
+    populateOfficeList() {
+        const officeList = document.getElementById('officeList');
+        
+        if (this.offices.length === 0) {
+            officeList.innerHTML = '<p class="no-results">No offices found</p>';
+            return;
+        }
+        
+        const listHTML = this.offices.map(office => `
+            <div class="office-item" onclick="dtiMap.showOfficeDetails(${office.office_id})">
+                <div class="office-header">
+                    <div class="office-name">${office.office_name}</div>
+                    <div class="office-type">${office.office_type}</div>
+                </div>
+                <div class="office-region ${office.region_id === 7 ? 'cebu-region' : 'other-region'}">
+                    ${office.region_name}
+                </div>
+                <div class="office-address">${office.address}</div>
+                ${this.isAdmin ? `
+                    <div class="office-actions">
+                        <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); dtiMap.showOfficeDetails(${office.office_id})">
+                            <i class="fas fa-info-circle"></i> Details
+                        </button>
+                        <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); dtiMap.editOffice(${office.office_id})">
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); dtiMap.deleteOffice(${office.office_id}, '${office.office_name}')">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                    </div>
+                ` : ''}
+            </div>
+        `).join('');
+        
+        officeList.innerHTML = listHTML;
+    }
+    
+    async showOfficeDetails(officeId) {
+        try {
+            const response = await fetch(`endpoint/get-office-details.php?office_id=${officeId}`);
+            const data = await response.json();
+            
+            if (data.success) {
+                const office = data.office;
+                this.displayOfficeModal(office);
+            } else {
+                this.showNotification('Error loading office details', 'error');
+            }
+        } catch (error) {
+            console.error('Error loading office details:', error);
+            this.showNotification('Error loading office details', 'error');
         }
     }
-}
-
-// Show office details in modal
-function showOfficeDetails(officeId) {
-    const office = offices.find(o => o.office_id === officeId);
-    if (!office) return;
     
-    const modalTitle = document.getElementById('modalTitle');
-    const modalBody = document.getElementById('modalBody');
-    
-    modalTitle.textContent = office.office_name;
-    modalBody.innerHTML = `
-        <div class="office-detail-grid">
-            <div class="office-detail-header">
-                ${office.image_path ? `
-                    <img src="${office.image_path}" alt="${office.office_name}" class="office-detail-image">
-                ` : ''}
-                <h3 class="office-detail-title">${office.office_name}</h3>
-                <div class="office-detail-badges">
-                    <span class="badge badge-primary">${office.office_type}</span>
-                    <span class="badge ${office.is_ncr ? 'badge-warning' : 'badge-success'}">${office.region_name}${office.is_ncr ? ' (NCR)' : ''}</span>
-                </div>
-            </div>
-            
-            <div class="office-detail-info">
-                <div class="info-section">
-                    <h4><i class="fas fa-info-circle"></i> Contact Information</h4>
-                    ${office.address ? `
-                        <div class="info-item">
-                            <i class="fas fa-map-marker-alt"></i>
-                            <div><strong>Address:</strong> ${office.address}</div>
+    displayOfficeModal(office) {
+        const modalTitle = document.getElementById('modalTitle');
+        const modalBody = document.getElementById('modalBody');
+        
+        modalTitle.textContent = office.office_name;
+        
+        const servicesHTML = office.services && office.services.length > 0 
+            ? office.services.map(service => `<span class="service-tag">${service}</span>`).join('')
+            : '<span class="no-services">No services listed</span>';
+        
+        const staffHTML = office.staff && office.staff.length > 0
+            ? office.staff.map(staff => `
+                <div class="staff-item">
+                    <div class="staff-info">
+                        <h4>${staff.staff_name}</h4>
+                        <p class="staff-position">${staff.position}</p>
+                        ${staff.contact_number ? `<p><i class="fas fa-phone"></i> ${staff.contact_number}</p>` : ''}
+                        ${staff.email ? `<p><i class="fas fa-envelope"></i> ${staff.email}</p>` : ''}
+                    </div>
+                    ${this.isAdmin ? `
+                        <div class="staff-actions">
+                            <button class="btn btn-sm btn-secondary" onclick="dtiMap.editStaff(${staff.staff_id})">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="dtiMap.deleteStaff(${staff.staff_id}, '${staff.staff_name}')">
+                                <i class="fas fa-trash"></i> Delete
+                            </button>
                         </div>
                     ` : ''}
+                </div>
+            `).join('')
+            : '<p class="no-staff">No staff information available</p>';
+        
+        modalBody.innerHTML = `
+            <div class="office-details">
+                <div class="office-info">
+                    <div class="info-item">
+                        <i class="fas fa-building"></i>
+                        <span><strong>Type:</strong> ${office.office_type}</span>
+                    </div>
+                    <div class="info-item">
+                        <i class="fas fa-map-marker-alt"></i>
+                        <span><strong>Address:</strong> ${office.address}</span>
+                    </div>
                     ${office.contact_number ? `
                         <div class="info-item">
                             <i class="fas fa-phone"></i>
-                            <div><strong>Phone:</strong> ${office.contact_number}</div>
+                            <span><strong>Contact:</strong> ${office.contact_number}</span>
                         </div>
                     ` : ''}
                     ${office.email ? `
                         <div class="info-item">
                             <i class="fas fa-envelope"></i>
-                            <div><strong>Email:</strong> ${office.email}</div>
+                            <span><strong>Email:</strong> ${office.email}</span>
+                        </div>
+                    ` : ''}
+                    ${office.office_head ? `
+                        <div class="info-item">
+                            <i class="fas fa-user-tie"></i>
+                            <span><strong>Office Head:</strong> ${office.office_head}</span>
                         </div>
                     ` : ''}
                     ${office.office_hours ? `
                         <div class="info-item">
                             <i class="fas fa-clock"></i>
-                            <div><strong>Office Hours:</strong> ${office.office_hours}</div>
+                            <span><strong>Office Hours:</strong> ${office.office_hours}</span>
                         </div>
                     ` : ''}
                 </div>
                 
-                ${office.office_head ? `
-                    <div class="info-section">
-                        <h4><i class="fas fa-user-tie"></i> Office Head</h4>
-                        <div class="info-item">
-                            <i class="fas fa-user"></i>
-                            <div>${office.office_head}</div>
-                        </div>
-                    </div>
-                ` : ''}
-                
-                ${office.services_offered ? `
-                    <div class="info-section">
-                        <h4><i class="fas fa-cogs"></i> Services Offered</h4>
-                        <div class="info-item">
-                            <i class="fas fa-list"></i>
-                            <div>${office.services_offered}</div>
-                        </div>
-                    </div>
-                ` : ''}
-                
                 ${office.description ? `
-                    <div class="info-section">
-                        <h4><i class="fas fa-file-alt"></i> Description</h4>
-                        <div class="info-item">
-                            <i class="fas fa-info"></i>
-                            <div>${office.description}</div>
-                        </div>
+                    <div class="office-description">
+                        <h3>About This Office</h3>
+                        <p>${office.description}</p>
                     </div>
                 ` : ''}
                 
-                <div class="info-section">
-                    <h4><i class="fas fa-map"></i> Location</h4>
-                    <div class="info-item">
-                        <i class="fas fa-crosshairs"></i>
-                        <div><strong>Coordinates:</strong> ${office.latitude}, ${office.longitude}</div>
+                <div class="office-services">
+                    <h3>Services Offered</h3>
+                    <div class="services-list">${servicesHTML}</div>
+                </div>
+                
+                <div class="office-staff">
+                    <div class="staff-header">
+                        <h3>Staff Members</h3>
+                        ${this.isAdmin ? `
+                            <button class="btn btn-primary" onclick="dtiMap.addStaff(${office.office_id})">
+                                <i class="fas fa-plus"></i> Add Staff
+                            </button>
+                        ` : ''}
                     </div>
-                    <div style="margin-top: 1rem;">
-                        <button class="btn btn-primary" onclick="viewOfficeOnMap(${office.office_id}); closeModal();">
-                            <i class="fas fa-map-marker-alt"></i> View on Map
-                        </button>
-                        <button class="btn btn-secondary" onclick="getDirections(${office.latitude}, ${office.longitude})">
-                            <i class="fas fa-directions"></i> Get Directions
-                        </button>
-                    </div>
+                    <div class="staff-list">${staffHTML}</div>
                 </div>
             </div>
-        </div>
-    `;
-    
-    openModal();
-}
-
-// Handle add office form submission
-async function handleAddOffice(e) {
-    e.preventDefault();
-    
-    const formData = new FormData(e.target);
-    
-    // Validate required fields
-    if (!formData.get('latitude') || !formData.get('longitude')) {
-        showAlert('Please click on the map to select a location.', 'error');
-        return;
+        `;
+        
+        document.getElementById('officeModal').style.display = 'block';
     }
     
-    try {
-        showLoading(true);
-        
-        const response = await fetch('endpoint/add-office.php', {
-            method: 'POST',
-            body: formData
+    setupEventListeners() {
+        // Search functionality
+        document.getElementById('searchInput').addEventListener('input', () => {
+            this.searchOffices();
         });
         
-        const data = await response.json();
+        document.getElementById('regionFilter').addEventListener('change', () => {
+            this.searchOffices();
+        });
         
-        if (data.success) {
-            showAlert('DTI office added successfully!', 'success');
-            toggleAddOffice();
-            loadOffices(); // Reload offices
+        document.getElementById('typeFilter').addEventListener('change', () => {
+            this.searchOffices();
+        });
+        
+        // Form submissions
+        if (this.isAdmin) {
+            document.getElementById('officeForm').addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.saveOffice();
+            });
             
-            // Remove temporary marker
-            if (currentMarker) {
-                map.removeLayer(currentMarker);
-                currentMarker = null;
+            document.getElementById('staffForm').addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.saveStaff();
+            });
+        }
+        
+        // Modal close events
+        window.addEventListener('click', (e) => {
+            if (e.target.classList.contains('modal')) {
+                e.target.style.display = 'none';
             }
-            
-            // Reset form
-            e.target.reset();
-            document.getElementById('formLatitude').value = '';
-            document.getElementById('formLongitude').value = '';
-        } else {
-            showAlert('Error: ' + data.message, 'error');
-        }
-    } catch (error) {
-        showAlert('Network error: ' + error.message, 'error');
-    } finally {
-        showLoading(false);
-    }
-}
-
-// Delete office
-async function deleteOffice(officeId) {
-    if (!confirm('Are you sure you want to delete this DTI office?')) {
-        return;
+        });
     }
     
-    try {
-        showLoading(true);
+    async searchOffices() {
+        const searchTerm = document.getElementById('searchInput').value;
+        const regionId = document.getElementById('regionFilter').value;
+        const officeType = document.getElementById('typeFilter').value;
         
-        const response = await fetch('endpoint/delete-office.php', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ office_id: officeId })
+        let filteredOffices = this.offices;
+        
+        if (searchTerm) {
+            filteredOffices = filteredOffices.filter(office => 
+                office.office_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                office.address.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (office.office_head && office.office_head.toLowerCase().includes(searchTerm.toLowerCase()))
+            );
+        }
+        
+        if (regionId) {
+            filteredOffices = filteredOffices.filter(office => 
+                office.region_id == regionId
+            );
+        }
+        
+        if (officeType) {
+            filteredOffices = filteredOffices.filter(office => 
+                office.office_type === officeType
+            );
+        }
+        
+        // Update display
+        this.displayFilteredOffices(filteredOffices);
+    }
+    
+    displayFilteredOffices(offices) {
+        // Clear existing markers
+        this.markers.forEach(marker => this.map.removeLayer(marker));
+        this.markers = [];
+        
+        // Add filtered markers
+        offices.forEach(office => {
+            const marker = L.marker([office.latitude, office.longitude], {
+                icon: this.createMarkerIcon(office.office_type)
+            }).addTo(this.map);
+            
+            marker.bindPopup(this.createPopupContent(office));
+            marker.on('click', () => this.showOfficeDetails(office.office_id));
+            
+            this.markers.push(marker);
         });
         
-        const data = await response.json();
+        // Update office list
+        const officeList = document.getElementById('officeList');
         
-        if (data.success) {
-            showAlert('DTI office deleted successfully!', 'success');
-            loadOffices(); // Reload offices
-        } else {
-            showAlert('Error: ' + data.message, 'error');
+        if (offices.length === 0) {
+            officeList.innerHTML = '<p class="no-results">No offices found matching your criteria</p>';
+            return;
         }
-    } catch (error) {
-        showAlert('Network error: ' + error.message, 'error');
-    } finally {
-        showLoading(false);
+        
+        const listHTML = offices.map(office => `
+            <div class="office-item" onclick="dtiMap.showOfficeDetails(${office.office_id})">
+                <div class="office-header">
+                    <div class="office-name">${office.office_name}</div>
+                    <div class="office-type">${office.office_type}</div>
+                </div>
+                <div class="office-region ${office.region_id === 7 ? 'cebu-region' : 'other-region'}">
+                    ${office.region_name}
+                </div>
+                <div class="office-address">${office.address}</div>
+                ${this.isAdmin ? `
+                                        <div class="office-actions">
+                        <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); dtiMap.showOfficeDetails(${office.office_id})">
+                            <i class="fas fa-info-circle"></i> Details
+                        </button>
+                        <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); dtiMap.editOffice(${office.office_id})">
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); dtiMap.deleteOffice(${office.office_id}, '${office.office_name}')">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                    </div>
+                ` : ''}
+            </div>
+        `).join('');
+        
+        officeList.innerHTML = listHTML;
+        
+        // Fit map to show all filtered offices
+        if (offices.length > 0) {
+            const group = new L.featureGroup(this.markers);
+            this.map.fitBounds(group.getBounds().pad(0.1));
+        }
+    }
+    
+    // Admin Functions
+    toggleAddOffice() {
+        document.getElementById('officeForm').reset();
+        document.getElementById('officeId').value = '';
+        document.getElementById('officeModalTitle').textContent = 'Add New Office';
+        document.getElementById('addOfficeModal').style.display = 'block';
+    }
+    
+    async editOffice(officeId) {
+        try {
+            const response = await fetch(`endpoint/get-office-details.php?office_id=${officeId}`);
+            const data = await response.json();
+            
+            if (data.success) {
+                const office = data.office;
+                this.populateOfficeForm(office);
+                document.getElementById('officeModalTitle').textContent = 'Edit Office';
+                document.getElementById('addOfficeModal').style.display = 'block';
+            }
+        } catch (error) {
+            console.error('Error loading office for edit:', error);
+            this.showNotification('Error loading office details', 'error');
+        }
+    }
+    
+    populateOfficeForm(office) {
+        document.getElementById('officeId').value = office.office_id;
+        document.getElementById('officeName').value = office.office_name;
+        document.getElementById('officeType').value = office.office_type;
+        document.getElementById('regionId').value = office.region_id;
+        document.getElementById('address').value = office.address;
+        document.getElementById('latitude').value = office.latitude;
+        document.getElementById('longitude').value = office.longitude;
+        document.getElementById('contactNumber').value = office.contact_number || '';
+        document.getElementById('email').value = office.email || '';
+        document.getElementById('officeHead').value = office.office_head || '';
+        document.getElementById('description').value = office.description || '';
+        document.getElementById('servicesOffered').value = office.services_offered || '';
+        document.getElementById('officeHours').value = office.office_hours || '';
+    }
+    
+    async saveOffice() {
+        const formData = new FormData(document.getElementById('officeForm'));
+        const isEdit = document.getElementById('officeId').value !== '';
+        
+        try {
+            const endpoint = isEdit ? 'endpoint/update-office.php' : 'endpoint/add-office.php';
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                this.showNotification(isEdit ? 'Office updated successfully' : 'Office added successfully', 'success');
+                document.getElementById('addOfficeModal').style.display = 'none';
+                await this.loadOffices(); // Reload offices
+            } else {
+                this.showNotification('Error: ' + data.message, 'error');
+            }
+        } catch (error) {
+            console.error('Error saving office:', error);
+            this.showNotification('Error saving office', 'error');
+        }
+    }
+    
+    async deleteOffice(officeId, officeName) {
+        if (!confirm(`Are you sure you want to delete "${officeName}"?`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch('endpoint/delete-office.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ office_id: officeId })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                this.showNotification('Office deleted successfully', 'success');
+                await this.loadOffices(); // Reload offices
+            } else {
+                this.showNotification('Error: ' + data.message, 'error');
+            }
+        } catch (error) {
+            console.error('Error deleting office:', error);
+            this.showNotification('Error deleting office', 'error');
+        }
+    }
+    
+    addStaff(officeId) {
+        document.getElementById('staffForm').reset();
+        document.getElementById('staffId').value = '';
+        document.getElementById('staffOfficeId').value = officeId;
+        document.getElementById('staffModalTitle').textContent = 'Add Staff Member';
+        document.getElementById('staffModal').style.display = 'block';
+    }
+    
+    async editStaff(staffId) {
+        try {
+            const response = await fetch(`endpoint/get-staff-details.php?staff_id=${staffId}`);
+            const data = await response.json();
+            
+            if (data.success) {
+                const staff = data.staff;
+                this.populateStaffForm(staff);
+                document.getElementById('staffModalTitle').textContent = 'Edit Staff Member';
+                document.getElementById('staffModal').style.display = 'block';
+            }
+        } catch (error) {
+            console.error('Error loading staff for edit:', error);
+            this.showNotification('Error loading staff details', 'error');
+        }
+    }
+    
+    populateStaffForm(staff) {
+        document.getElementById('staffId').value = staff.staff_id;
+        document.getElementById('staffOfficeId').value = staff.office_id;
+        document.getElementById('staffName').value = staff.staff_name;
+        document.getElementById('position').value = staff.position;
+        document.getElementById('staffType').value = staff.staff_type || 'Regular';
+        document.getElementById('staffContact').value = staff.contact_number || '';
+        document.getElementById('staffEmail').value = staff.email || '';
+        document.getElementById('staffServices').value = staff.services_offered || '';
+        document.getElementById('bio').value = staff.bio || '';
+    }
+    
+    async saveStaff() {
+        const formData = new FormData(document.getElementById('staffForm'));
+        const isEdit = document.getElementById('staffId').value !== '';
+        
+        try {
+            const endpoint = isEdit ? 'endpoint/update-staff.php' : 'endpoint/add-staff.php';
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                this.showNotification(isEdit ? 'Staff updated successfully' : 'Staff added successfully', 'success');
+                document.getElementById('staffModal').style.display = 'none';
+                document.getElementById('officeModal').style.display = 'none';
+                // Refresh the office details if modal was open
+                const officeId = document.getElementById('staffOfficeId').value;
+                if (officeId) {
+                    setTimeout(() => this.showOfficeDetails(officeId), 500);
+                }
+            } else {
+                this.showNotification('Error: ' + data.message, 'error');
+            }
+        } catch (error) {
+            console.error('Error saving staff:', error);
+            this.showNotification('Error saving staff', 'error');
+        }
+    }
+    
+    async deleteStaff(staffId, staffName) {
+        if (!confirm(`Are you sure you want to delete "${staffName}"?`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch('endpoint/delete-staff.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ staff_id: staffId })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                this.showNotification('Staff deleted successfully', 'success');
+                document.getElementById('officeModal').style.display = 'none';
+                // Refresh the office details
+                const officeId = document.getElementById('staffOfficeId').value;
+                if (officeId) {
+                    setTimeout(() => this.showOfficeDetails(officeId), 500);
+                }
+            } else {
+                this.showNotification('Error: ' + data.message, 'error');
+            }
+        } catch (error) {
+            console.error('Error deleting staff:', error);
+            this.showNotification('Error deleting staff', 'error');
+        }
+    }
+    
+    showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = `notification ${type}`;
+        notification.innerHTML = `
+            <span>${message}</span>
+            <button onclick="this.parentElement.remove()">&times;</button>
+        `;
+        
+        document.body.appendChild(notification);
+        
+        // Auto remove after 5 seconds
+        setTimeout(() => {
+            if (notification.parentElement) {
+                notification.remove();
+            }
+        }, 5000);
     }
 }
 
-// Get directions
-function getDirections(lat, lng) {
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-    window.open(url, '_blank');
+// Global functions for onclick events
+function closeModal(modalId) {
+    document.getElementById(modalId).style.display = 'none';
 }
 
-// Toggle add office section
 function toggleAddOffice() {
-    const section = document.getElementById('addOfficeSection');
-    const isVisible = section.style.display !== 'none';
-    
-    section.style.display = isVisible ? 'none' : 'block';
-    
-    if (!isVisible) {
-        // Scroll to form
-        section.scrollIntoView({ behavior: 'smooth' });
-    } else {
-        // Remove temporary marker when closing
-        if (currentMarker) {
-            map.removeLayer(currentMarker);
-            currentMarker = null;
-        }
-    }
+    dtiMap.toggleAddOffice();
 }
 
-// Toggle sidebar
-function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    sidebar.classList.toggle('collapsed');
+function searchOffices() {
+    dtiMap.searchOffices();
 }
 
-// Reset map view
-function resetMapView() {
-    map.setView([12.8797, 121.7740], 6);
-}
-
-// Toggle fullscreen
-function toggleFullscreen() {
-    if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen();
-    } else {
-        document.exitFullscreen();
-    }
-}
-
-// Modal functions
-function openModal() {
-    document.getElementById('officeModal').classList.add('active');
-    document.body.style.overflow = 'hidden';
-}
-
-function closeModal() {
-    document.getElementById('officeModal').classList.remove('active');
-    document.body.style.overflow = '';
-}
-
-// Loading functions
-function showLoading(show) {
-    const overlay = document.getElementById('loadingOverlay');
-    if (show) {
-        overlay.classList.add('active');
-    } else {
-        overlay.classList.remove('active');
-    }
-}
-
-// Alert function
-function showAlert(message, type = 'info') {
-    // Remove existing alerts
-    const existingAlerts = document.querySelectorAll('.alert');
-    existingAlerts.forEach(alert => alert.remove());
-    
-    // Create new alert
-    const alert = document.createElement('div');
-    alert.className = `alert alert-${type}`;
-    alert.innerHTML = `
-        <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
-        <span>${message}</span>
-    `;
-    
-    // Insert at top of sidebar
-    const sidebar = document.getElementById('sidebar');
-    sidebar.insertBefore(alert, sidebar.firstChild);
-    
-    // Auto remove after 5 seconds
-    setTimeout(() => {
-        if (alert.parentNode) {
-            alert.remove();
-        }
-    }, 5000);
-}
-
-// Utility function for debouncing
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
-            clearTimeout(timeout);
-            func(...args);
-                    };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
-}
-
-// Export functions for global access
-window.selectOffice = selectOffice;
-window.viewOfficeOnMap = viewOfficeOnMap;
-window.showOfficeDetails = showOfficeDetails;
-window.deleteOffice = deleteOffice;
-window.getDirections = getDirections;
-window.toggleAddOffice = toggleAddOffice;
-window.toggleSidebar = toggleSidebar;
-window.resetMapView = resetMapView;
-window.toggleFullscreen = toggleFullscreen;
-window.closeModal = closeModal;
-window.clearFilters = clearFilters;
+// Initialize the map when DOM is loaded
+let dtiMap;
+document.addEventListener('DOMContentLoaded', function() {
+    dtiMap = new DTIMap();
+});
 
